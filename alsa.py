@@ -56,6 +56,7 @@ class snd_seq_event(ctypes.Structure):
 SND_SEQ_OPEN_DUPLEX = 2
 SND_SEQ_NONBLOCK = 1
 SND_SEQ_PORT_CAP_WRITE = 1 << 1
+SND_SEQ_PORT_CAP_SUBS_WRITE = 1 << 5
 SND_SEQ_PORT_CAP_READ = 1 << 0
 SND_SEQ_QUERY_SUBS_READ = 1
 
@@ -293,10 +294,16 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
     alsalib.snd_seq_port_subscribe_set_sender(sub_ptr, ctypes.byref(sender))
     alsalib.snd_seq_port_subscribe_set_dest(sub_ptr, ctypes.byref(dest))
 
-    success = False
-    if alsalib.snd_seq_subscribe_port(seq, sub_ptr) == 0:
-        print(f"  [OK] Ensuring connection: {source_str} -> {dest_str}")
+    result = alsalib.snd_seq_subscribe_port(seq, sub_ptr)
+    if result == 0:
+        print(f"  [OK] Connected: {source_str} -> {dest_str}")
         success = True
+    else:
+        print(
+            f"  [ERROR] Failed to connect {source_str} -> {dest_str}, error code: {result}",
+            file=sys.stderr,
+        )
+        success = False
 
     alsalib.snd_seq_port_subscribe_free(sub_ptr)
     return success
@@ -347,7 +354,8 @@ def main():
     input_port = alsalib.snd_seq_create_simple_port(
         seq,
         b"input",
-        SND_SEQ_PORT_CAP_READ,  # This port can receive events
+        SND_SEQ_PORT_CAP_WRITE
+        | (1 << 5),  # SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE
         SND_SEQ_PORT_TYPE_APPLICATION,
     )
 
@@ -356,25 +364,27 @@ def main():
         alsalib.snd_seq_close(seq)
         sys.exit(1)
 
-    print(f"Created input port: {input_port}")
+    # Instead of subscribing to announce port, let's connect from announce port to us
+    # This is how aseqdump does it
+    alsalib.snd_seq_connect_from.argtypes = [
+        snd_seq_t,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    alsalib.snd_seq_connect_from.restype = ctypes.c_int
 
-    # Subscribe to the announce port to receive system-wide events
-    sub_ptr = snd_seq_port_subscribe_t()
-    alsalib.snd_seq_port_subscribe_malloc(ctypes.byref(sub_ptr))
-
-    sender = snd_seq_addr(client=0, port=1)  # System Announce port is 0:1
-    dest_client_id = alsalib.snd_seq_client_id(seq)
-    dest = snd_seq_addr(client=dest_client_id, port=input_port)  # Use the created port
-    alsalib.snd_seq_port_subscribe_set_sender(sub_ptr, ctypes.byref(sender))
-    alsalib.snd_seq_port_subscribe_set_dest(sub_ptr, ctypes.byref(dest))
-
-    if alsalib.snd_seq_subscribe_port(seq, sub_ptr) < 0:
-        print("Could not subscribe to announce port.", file=sys.stderr)
+    # Connect from system announce port (0:1) to our port
+    connect_result = alsalib.snd_seq_connect_from(seq, input_port, 0, 1)
+    if connect_result < 0:
+        print(
+            f"Could not connect from announce port. Error code: {connect_result}",
+            file=sys.stderr,
+        )
         alsalib.snd_seq_close(seq)
         sys.exit(1)
 
-    print("Successfully subscribed to announce port.")
-    alsalib.snd_seq_port_subscribe_free(sub_ptr)
+    print("Successfully connected to announce port for events.")
 
     # Set up polling
     poll_count = alsalib.snd_seq_poll_descriptors_count(seq, select.POLLIN)
@@ -412,7 +422,6 @@ def main():
                 while alsalib.snd_seq_event_input(seq, ctypes.byref(event_ptr)) >= 0:
                     event = event_ptr.contents
                     if event and event.type in RELEVANT_EVENTS:
-                        print(f"  [EVENT] Received ALSA event type {event.type}")
                         reconciliation_needed = True
 
                 if reconciliation_needed:
