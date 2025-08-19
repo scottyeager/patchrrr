@@ -324,7 +324,7 @@ def main():
     sub_ptr = snd_seq_port_subscribe_t()
     alsalib.snd_seq_port_subscribe_malloc(ctypes.byref(sub_ptr))
 
-    sender = snd_seq_addr(client=0, port=0)  # System Announce port is 0:0
+    sender = snd_seq_addr(client=0, port=1)  # System Announce port is 0:1
     dest_client_id = alsalib.snd_seq_client_id(seq)
     dest = snd_seq_addr(client=dest_client_id, port=0)  # Our client's first port
     alsalib.snd_seq_port_subscribe_set_sender(sub_ptr, ctypes.byref(sender))
