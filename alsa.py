@@ -10,7 +10,7 @@ from typing import Set, Tuple
 # This list is the "source of truth" for your MIDI setup.
 # Use the format "Client Name:Port Name" or "Client Number:Port Number".
 DESIRED_CONNECTIONS = [
-    ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 1"),
+    ("a2j:Midi Through", "Midi Fighter Twister:Midi Fighter Twister MIDI 1"),
     # Example: ("20:0", "128:0"),
 ]
 
@@ -63,7 +63,17 @@ SND_SEQ_QUERY_SUBS_READ = 1
 SND_SEQ_PORT_TYPE_APPLICATION = 1
 
 # Event types that trigger a reconciliation
-RELEVANT_EVENTS = {60, 61, 62, 63, 64, 65, 66, 67}
+# Include client/port creation, deletion, and change events
+RELEVANT_EVENTS = {
+    60,  # SND_SEQ_EVENT_CLIENT_START
+    61,  # SND_SEQ_EVENT_CLIENT_EXIT
+    62,  # SND_SEQ_EVENT_CLIENT_CHANGE
+    63,  # SND_SEQ_EVENT_PORT_START
+    64,  # SND_SEQ_EVENT_PORT_EXIT
+    65,  # SND_SEQ_EVENT_PORT_CHANGE
+    66,  # SND_SEQ_EVENT_PORT_SUBSCRIBED
+    67,  # SND_SEQ_EVENT_PORT_UNSUBSCRIBED
+}
 
 # --- ALSA Function Prototypes ---
 # Suppress the default ALSA error handler
@@ -402,6 +412,7 @@ def main():
                 while alsalib.snd_seq_event_input(seq, ctypes.byref(event_ptr)) >= 0:
                     event = event_ptr.contents
                     if event and event.type in RELEVANT_EVENTS:
+                        print(f"  [EVENT] Received ALSA event type {event.type}")
                         reconciliation_needed = True
 
                 if reconciliation_needed:
@@ -415,11 +426,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # # Define a no-op handler to suppress ALSA's default error messages
-    # @SND_ERROR_HANDLER_T
-    # def py_error_handler(filename, line, function, err, fmt):
-    #     pass
-
-    # alsalib.snd_lib_error_set_handler(py_error_handler)
-
     main()
