@@ -281,7 +281,7 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
             file=sys.stderr,
         )
         return False
-    
+
     result = alsalib.snd_seq_parse_address(
         seq, ctypes.byref(dest), dest_str.encode("utf-8")
     )
@@ -334,7 +334,10 @@ def alsa_strerror(error_code: int) -> str:
     alsalib.snd_strerror.argtypes = [ctypes.c_int]
     alsalib.snd_strerror.restype = ctypes.c_char_p
     error_str = alsalib.snd_strerror(error_code)
-    return error_str.decode('utf-8') if error_str else f"Unknown error code {error_code}"
+    return (
+        error_str.decode("utf-8") if error_str else f"Unknown error code {error_code}"
+    )
+
 
 def signal_handler(sig, frame):
     """Handles signals and sets the running flag to false."""
@@ -371,7 +374,9 @@ def main():
     )
 
     if input_port < 0:
-        print(f"Error creating input port: {alsa_strerror(input_port)}", file=sys.stderr)
+        print(
+            f"Error creating input port: {alsa_strerror(input_port)}", file=sys.stderr
+        )
         alsalib.snd_seq_close(seq)
         sys.exit(1)
 
