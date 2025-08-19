@@ -203,6 +203,13 @@ alsalib.snd_seq_connect_from.argtypes = [
 ]
 alsalib.snd_seq_connect_from.restype = ctypes.c_int
 
+# Query subscription (check existing connections)
+alsalib.snd_seq_get_port_subscription.argtypes = [
+    snd_seq_t,
+    snd_seq_port_subscribe_t,
+]
+alsalib.snd_seq_get_port_subscription.restype = ctypes.c_int
+
 # Error string function
 alsalib.snd_strerror.argtypes = [ctypes.c_int]
 alsalib.snd_strerror.restype = ctypes.c_char_p
@@ -320,7 +327,7 @@ def debug_port_capabilities(port_str: str) -> str:
 
 
 def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
-    """Connects two ALSA ports using the subscription mechanism."""
+    """Connects two ALSA ports using subscription mechanism, similar to aconnect."""
     if not seq:
         return False
 
@@ -351,10 +358,43 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
         )
         return False
 
+    # Check if connection already exists
+    query_ptr = snd_seq_query_subscribe_t()
+    alsalib.snd_seq_query_subscribe_malloc(ctypes.byref(query_ptr))
+    alsalib.snd_seq_query_subscribe_set_root(query_ptr, ctypes.byref(sender))
+    alsalib.snd_seq_query_subscribe_set_type(query_ptr, SND_SEQ_QUERY_SUBS_READ)
+    alsalib.snd_seq_query_subscribe_set_index(query_ptr, 0)
+    
+    connection_exists = False
+    while alsalib.snd_seq_query_port_subscribers(seq, query_ptr) >= 0:
+        sub_addr = alsalib.snd_seq_query_subscribe_get_addr(query_ptr).contents
+        if sub_addr.client == dest.client and sub_addr.port == dest.port:
+            connection_exists = True
+            break
+        index = alsalib.snd_seq_query_subscribe_get_index(query_ptr)
+        alsalib.snd_seq_query_subscribe_set_index(query_ptr, index + 1)
+    
+    alsalib.snd_seq_query_subscribe_free(query_ptr)
+    
+    if connection_exists:
+        print(f"  [OK] Connection already exists: {source_str} -> {dest_str}")
+        return True
+
+    # Create subscription (connection)
     sub_ptr = snd_seq_port_subscribe_t()
     alsalib.snd_seq_port_subscribe_malloc(ctypes.byref(sub_ptr))
     alsalib.snd_seq_port_subscribe_set_sender(sub_ptr, ctypes.byref(sender))
     alsalib.snd_seq_port_subscribe_set_dest(sub_ptr, ctypes.byref(dest))
+    alsalib.snd_seq_port_subscribe_set_queue(sub_ptr, 0)
+    alsalib.snd_seq_port_subscribe_set_exclusive(sub_ptr, 0)
+    alsalib.snd_seq_port_subscribe_set_time_update(sub_ptr, 0)
+    alsalib.snd_seq_port_subscribe_set_time_real(sub_ptr, 0)
+
+    # Check if already subscribed
+    if alsalib.snd_seq_get_port_subscription(seq, sub_ptr) == 0:
+        print(f"  [OK] Connection already exists: {source_str} -> {dest_str}")
+        alsalib.snd_seq_port_subscribe_free(sub_ptr)
+        return True
 
     result = alsalib.snd_seq_subscribe_port(seq, sub_ptr)
     if result == 0:
