@@ -311,8 +311,14 @@ def debug_port_capabilities(port_str: str) -> str:
         return "cannot get port info"
 
     caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
-    alsalib.snd_seq_port_info_free(pinfo_ptr)
-
+    
+    # Get port direction - need to define the constants
+    SND_SEQ_PORT_DIR_INPUT = 1
+    SND_SEQ_PORT_DIR_OUTPUT = 2
+    
+    # Check if we can get direction from the port info structure
+    # Note: This is a simplified approach since we don't have direct access to direction
+    
     cap_strings = []
     if caps & SND_SEQ_PORT_CAP_READ:
         cap_strings.append("READ")
@@ -322,7 +328,14 @@ def debug_port_capabilities(port_str: str) -> str:
         cap_strings.append("SUBS_WRITE")
     if caps & (1 << 4):  # SND_SEQ_PORT_CAP_SUBS_READ
         cap_strings.append("SUBS_READ")
+    
+    # Determine port type based on capabilities
+    if caps & SND_SEQ_PORT_CAP_READ and caps & SND_SEQ_PORT_CAP_SUBS_READ:
+        cap_strings.append("OUTPUT")
+    if caps & SND_SEQ_PORT_CAP_WRITE and caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
+        cap_strings.append("INPUT")
 
+    alsalib.snd_seq_port_info_free(pinfo_ptr)
     return f"caps=0x{caps:x} [{', '.join(cap_strings)}]"
 
 
@@ -357,6 +370,36 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
             file=sys.stderr,
         )
         return False
+
+    # Check port capabilities - source must be readable, dest must be writable
+    pinfo_ptr = snd_seq_port_info_t()
+    alsalib.snd_seq_port_info_malloc(ctypes.byref(pinfo_ptr))
+
+    # Check source capabilities
+    if alsalib.snd_seq_get_any_port_info(seq, sender.client, sender.port, pinfo_ptr) < 0:
+        alsalib.snd_seq_port_info_free(pinfo_ptr)
+        print(f"  [ERROR] Cannot get source port info")
+        return False
+    
+    source_caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
+    if not (source_caps & SND_SEQ_PORT_CAP_READ):
+        alsalib.snd_seq_port_info_free(pinfo_ptr)
+        print(f"  [ERROR] Source port is not readable (cannot send data)")
+        return False
+
+    # Check destination capabilities
+    if alsalib.snd_seq_get_any_port_info(seq, dest.client, dest.port, pinfo_ptr) < 0:
+        alsalib.snd_seq_port_info_free(pinfo_ptr)
+        print(f"  [ERROR] Cannot get destination port info")
+        return False
+    
+    dest_caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
+    if not (dest_caps & SND_SEQ_PORT_CAP_WRITE):
+        alsalib.snd_seq_port_info_free(pinfo_ptr)
+        print(f"  [ERROR] Destination port is not writable (cannot receive data)")
+        return False
+
+    alsalib.snd_seq_port_info_free(pinfo_ptr)
 
     # Check if connection already exists
     query_ptr = snd_seq_query_subscribe_t()
