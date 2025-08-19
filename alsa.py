@@ -272,20 +272,23 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
     sender = snd_seq_addr()
     dest = snd_seq_addr()
 
-    if (
-        alsalib.snd_seq_parse_address(
-            seq, ctypes.byref(sender), source_str.encode("utf-8")
-        )
-        < 0
-    ):
-        print(f"  [ERROR] Cannot parse source address: {source_str}", file=sys.stderr)
-        return False
-    if (
-        alsalib.snd_seq_parse_address(seq, ctypes.byref(dest), dest_str.encode("utf-8"))
-        < 0
-    ):
+    result = alsalib.snd_seq_parse_address(
+        seq, ctypes.byref(sender), source_str.encode("utf-8")
+    )
+    if result < 0:
         print(
-            f"  [ERROR] Cannot parse destination address: {dest_str}", file=sys.stderr
+            f"  [ERROR] Cannot parse source address '{source_str}': {alsa_strerror(result)}",
+            file=sys.stderr,
+        )
+        return False
+    
+    result = alsalib.snd_seq_parse_address(
+        seq, ctypes.byref(dest), dest_str.encode("utf-8")
+    )
+    if result < 0:
+        print(
+            f"  [ERROR] Cannot parse destination address '{dest_str}': {alsa_strerror(result)}",
+            file=sys.stderr,
         )
         return False
 
@@ -300,7 +303,7 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
         success = True
     else:
         print(
-            f"  [ERROR] Failed to connect {source_str} -> {dest_str}, error code: {result}",
+            f"  [ERROR] Failed to connect {source_str} -> {dest_str}: {alsa_strerror(result)}",
             file=sys.stderr,
         )
         success = False
@@ -326,6 +329,13 @@ def reconcile_connections():
             connect_alsa_ports(source, dest)
 
 
+def alsa_strerror(error_code: int) -> str:
+    """Converts ALSA error code to human-readable string."""
+    alsalib.snd_strerror.argtypes = [ctypes.c_int]
+    alsalib.snd_strerror.restype = ctypes.c_char_p
+    error_str = alsalib.snd_strerror(error_code)
+    return error_str.decode('utf-8') if error_str else f"Unknown error code {error_code}"
+
 def signal_handler(sig, frame):
     """Handles signals and sets the running flag to false."""
     global running
@@ -344,7 +354,8 @@ def main():
         )
         < 0
     ):
-        print("Error opening ALSA sequencer.", file=sys.stderr)
+        error = ctypes.get_errno()
+        print(f"Error opening ALSA sequencer: {alsa_strerror(error)}", file=sys.stderr)
         sys.exit(1)
     seq = seq_ptr
 
@@ -360,7 +371,7 @@ def main():
     )
 
     if input_port < 0:
-        print("Error creating input port.", file=sys.stderr)
+        print(f"Error creating input port: {alsa_strerror(input_port)}", file=sys.stderr)
         alsalib.snd_seq_close(seq)
         sys.exit(1)
 
@@ -378,7 +389,7 @@ def main():
     connect_result = alsalib.snd_seq_connect_from(seq, input_port, 0, 1)
     if connect_result < 0:
         print(
-            f"Could not connect from announce port. Error code: {connect_result}",
+            f"Could not connect from announce port: {alsa_strerror(connect_result)}",
             file=sys.stderr,
         )
         alsalib.snd_seq_close(seq)
