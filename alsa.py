@@ -55,9 +55,9 @@ class snd_seq_event(ctypes.Structure):
 # --- ALSA Constants ---
 SND_SEQ_OPEN_DUPLEX = 2
 SND_SEQ_NONBLOCK = 1
-SND_SEQ_PORT_CAP_WRITE = 1 << 1
+SND_SEQ_PORT_CAP_WRITE = 1 << 1  # Port can receive data (input port)
 SND_SEQ_PORT_CAP_SUBS_WRITE = 1 << 5
-SND_SEQ_PORT_CAP_READ = 1 << 0
+SND_SEQ_PORT_CAP_READ = 1 << 0  # Port can send data (output port)
 SND_SEQ_QUERY_SUBS_READ = 1
 
 # Port types
@@ -77,10 +77,17 @@ RELEVANT_EVENTS = {
 }
 
 # --- ALSA Function Prototypes ---
-# Suppress the default ALSA error handler
+# Error handler to suppress ALSA messages
 SND_ERROR_HANDLER_T = ctypes.CFUNCTYPE(
     None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p
 )
+
+
+def null_error_handler(file, line, function, err, fmt):
+    """Null error handler to suppress ALSA error messages"""
+    pass
+
+
 alsalib.snd_lib_error_set_handler.argtypes = [SND_ERROR_HANDLER_T]
 
 # Sequencer handle
@@ -187,6 +194,18 @@ alsalib.snd_seq_query_subscribe_get_index.argtypes = [snd_seq_query_subscribe_t]
 alsalib.snd_seq_query_subscribe_get_index.restype = ctypes.c_int
 alsalib.snd_seq_query_subscribe_free.argtypes = [snd_seq_query_subscribe_t]
 
+# Connection functions
+alsalib.snd_seq_connect_from.argtypes = [
+    snd_seq_t,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+]
+alsalib.snd_seq_connect_from.restype = ctypes.c_int
+
+# Error string function
+alsalib.snd_strerror.argtypes = [ctypes.c_int]
+alsalib.snd_strerror.restype = ctypes.c_char_p
 
 # --- Global State ---
 seq = None
@@ -226,13 +245,14 @@ def get_current_state() -> Tuple[Set[str], Set[Tuple[str, str]]]:
             available_ports.add(full_port_str)
             client_ports[addr.client][addr.port] = full_port_str
 
-    # Second pass: Iterate through writable ports and query their subscribers
+    # Second pass: Iterate through readable (output) ports and query their subscribers
     for client_id, ports in client_ports.items():
         for port_id, source_full_str in ports.items():
             alsalib.snd_seq_get_any_port_info(seq, client_id, port_id, pinfo_ptr)
             caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
 
-            if caps & SND_SEQ_PORT_CAP_WRITE:  # This is a source port
+            # Check for both READ and WRITE capabilities to find all ports
+            if caps & (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_WRITE):
                 query_ptr = snd_seq_query_subscribe_t()
                 alsalib.snd_seq_query_subscribe_malloc(ctypes.byref(query_ptr))
                 sender_addr = snd_seq_addr(client=client_id, port=port_id)
@@ -264,10 +284,49 @@ def get_current_state() -> Tuple[Set[str], Set[Tuple[str, str]]]:
     return available_ports, connections
 
 
+def debug_port_capabilities(port_str: str) -> str:
+    """Returns a string describing the capabilities of a port for debugging."""
+    if not seq:
+        return "sequencer not available"
+
+    addr = snd_seq_addr()
+    if (
+        alsalib.snd_seq_parse_address(seq, ctypes.byref(addr), port_str.encode("utf-8"))
+        < 0
+    ):
+        return "cannot parse address"
+
+    pinfo_ptr = snd_seq_port_info_t()
+    alsalib.snd_seq_port_info_malloc(ctypes.byref(pinfo_ptr))
+
+    if alsalib.snd_seq_get_any_port_info(seq, addr.client, addr.port, pinfo_ptr) < 0:
+        alsalib.snd_seq_port_info_free(pinfo_ptr)
+        return "cannot get port info"
+
+    caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
+    alsalib.snd_seq_port_info_free(pinfo_ptr)
+
+    cap_strings = []
+    if caps & SND_SEQ_PORT_CAP_READ:
+        cap_strings.append("READ")
+    if caps & SND_SEQ_PORT_CAP_WRITE:
+        cap_strings.append("WRITE")
+    if caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
+        cap_strings.append("SUBS_WRITE")
+    if caps & (1 << 4):  # SND_SEQ_PORT_CAP_SUBS_READ
+        cap_strings.append("SUBS_READ")
+
+    return f"caps=0x{caps:x} [{', '.join(cap_strings)}]"
+
+
 def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
     """Connects two ALSA ports using the subscription mechanism."""
     if not seq:
         return False
+
+    # Debug port capabilities
+    print(f"  [DEBUG] Source '{source_str}': {debug_port_capabilities(source_str)}")
+    print(f"  [DEBUG] Dest '{dest_str}': {debug_port_capabilities(dest_str)}")
 
     sender = snd_seq_addr()
     dest = snd_seq_addr()
@@ -312,6 +371,52 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
     return success
 
 
+def list_available_ports():
+    """Lists all available MIDI ports for debugging."""
+    print("\n--- Available MIDI Ports ---")
+    available_ports, _ = get_current_state()
+
+    if not available_ports:
+        print("  No ports available")
+        return
+
+    # Get detailed port info
+    cinfo_ptr = snd_seq_client_info_t()
+    pinfo_ptr = snd_seq_port_info_t()
+    alsalib.snd_seq_client_info_malloc(ctypes.byref(cinfo_ptr))
+    alsalib.snd_seq_port_info_malloc(ctypes.byref(pinfo_ptr))
+
+    alsalib.snd_seq_client_info_set_client(cinfo_ptr, -1)
+    while alsalib.snd_seq_query_next_client(seq, cinfo_ptr) >= 0:
+        client_id = alsalib.snd_seq_client_info_get_client(cinfo_ptr)
+        client_name = alsalib.snd_seq_client_info_get_name(cinfo_ptr).decode("utf-8")
+
+        alsalib.snd_seq_port_info_set_client(pinfo_ptr, client_id)
+        alsalib.snd_seq_port_info_set_port(pinfo_ptr, -1)
+        while alsalib.snd_seq_query_next_port(seq, pinfo_ptr) >= 0:
+            addr = alsalib.snd_seq_port_info_get_addr(pinfo_ptr).contents
+            port_name = alsalib.snd_seq_port_info_get_name(pinfo_ptr).decode("utf-8")
+            caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
+
+            cap_str = []
+            if caps & SND_SEQ_PORT_CAP_READ:
+                cap_str.append("READ")
+            if caps & SND_SEQ_PORT_CAP_WRITE:
+                cap_str.append("WRITE")
+            if caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
+                cap_str.append("SUBS_WRITE")
+            if caps & (1 << 4):  # SND_SEQ_PORT_CAP_SUBS_READ
+                cap_str.append("SUBS_READ")
+
+            full_port_str = f"{client_name}:{port_name}"
+            print(
+                f"  {addr.client:3d}:{addr.port:<2d} {full_port_str:<40} [{', '.join(cap_str)}]"
+            )
+
+    alsalib.snd_seq_client_info_free(cinfo_ptr)
+    alsalib.snd_seq_port_info_free(pinfo_ptr)
+
+
 def reconcile_connections():
     """Compares the desired state with the current state and makes connections."""
     print("\n--- Reconciling ALSA MIDI Connections ---")
@@ -319,20 +424,38 @@ def reconcile_connections():
 
     if not available_ports:
         print("  [WARN] No ALSA MIDI ports available.")
+        list_available_ports()
         return
+
+    print(f"Found {len(available_ports)} available ports")
+    print(f"Found {len(current_connections)} existing connections")
 
     for source, dest in DESIRED_CONNECTIONS:
         if (source, dest) in current_connections:
+            print(f"  [OK] Connection already exists: {source} -> {dest}")
             continue
-        if source in available_ports and dest in available_ports:
-            print("  [!] Missing connection detected. Restoring...")
-            connect_alsa_ports(source, dest)
+
+        if source not in available_ports:
+            print(f"  [WARN] Source port not available: {source}")
+            continue
+
+        if dest not in available_ports:
+            print(f"  [WARN] Destination port not available: {dest}")
+            continue
+
+        print("  [!] Missing connection detected. Attempting to connect...")
+        connect_alsa_ports(source, dest)
+
+    # Show available ports for debugging
+    if len(DESIRED_CONNECTIONS) > 0 and not any(
+        source in available_ports and dest in available_ports
+        for source, dest in DESIRED_CONNECTIONS
+    ):
+        list_available_ports()
 
 
 def alsa_strerror(error_code: int) -> str:
     """Converts ALSA error code to human-readable string."""
-    alsalib.snd_strerror.argtypes = [ctypes.c_int]
-    alsalib.snd_strerror.restype = ctypes.c_char_p
     error_str = alsalib.snd_strerror(error_code)
     return (
         error_str.decode("utf-8") if error_str else f"Unknown error code {error_code}"
@@ -350,15 +473,16 @@ def signal_handler(sig, frame):
 def main():
     global seq
 
+    # Install null error handler to suppress ALSA error messages
+    null_handler = SND_ERROR_HANDLER_T(null_error_handler)
+    alsalib.snd_lib_error_set_handler(null_handler)
+
     seq_ptr = snd_seq_t()
-    if (
-        alsalib.snd_seq_open(
-            ctypes.byref(seq_ptr), b"default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK
-        )
-        < 0
-    ):
-        error = ctypes.get_errno()
-        print(f"Error opening ALSA sequencer: {alsa_strerror(error)}", file=sys.stderr)
+    result = alsalib.snd_seq_open(
+        ctypes.byref(seq_ptr), b"default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK
+    )
+    if result < 0:
+        print(f"Error opening ALSA sequencer: {alsa_strerror(result)}", file=sys.stderr)
         sys.exit(1)
     seq = seq_ptr
 
@@ -368,8 +492,7 @@ def main():
     input_port = alsalib.snd_seq_create_simple_port(
         seq,
         b"input",
-        SND_SEQ_PORT_CAP_WRITE
-        | (1 << 5),  # SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE
+        SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
         SND_SEQ_PORT_TYPE_APPLICATION,
     )
 
@@ -379,16 +502,6 @@ def main():
         )
         alsalib.snd_seq_close(seq)
         sys.exit(1)
-
-    # Instead of subscribing to announce port, let's connect from announce port to us
-    # This is how aseqdump does it
-    alsalib.snd_seq_connect_from.argtypes = [
-        snd_seq_t,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-    ]
-    alsalib.snd_seq_connect_from.restype = ctypes.c_int
 
     # Connect from system announce port (0:1) to our port
     connect_result = alsalib.snd_seq_connect_from(seq, input_port, 0, 1)
