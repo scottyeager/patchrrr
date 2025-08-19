@@ -10,7 +10,7 @@ from typing import Set, Tuple
 # This list is the "source of truth" for your MIDI setup.
 # Use the format "Client Name:Port Name" or "Client Number:Port Number".
 DESIRED_CONNECTIONS = [
-    ("a2j:Midi Through", "Midi Fighter Twister:Midi Fighter Twister MIDI 1"),
+    ("Pure Data:Pure Data Midi-Out 1", "Pure Data:Pure Data Midi-In 1"),
     # Example: ("20:0", "128:0"),
 ]
 
