@@ -330,7 +330,7 @@ def debug_port_capabilities(port_str: str) -> str:
         cap_strings.append("SUBS_READ")
     
     # Determine port type based on capabilities
-    if caps & SND_SEQ_PORT_CAP_READ and caps & SND_SEQ_PORT_CAP_SUBS_READ:
+    if caps & SND_SEQ_PORT_CAP_READ and caps & (1 << 4):  # SUBS_READ
         cap_strings.append("OUTPUT")
     if caps & SND_SEQ_PORT_CAP_WRITE and caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
         cap_strings.append("INPUT")
