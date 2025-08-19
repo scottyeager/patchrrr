@@ -10,7 +10,7 @@ from typing import Set, Tuple
 # This list is the "source of truth" for your MIDI setup.
 # Use the format "Client Name:Port Name" or "Client Number:Port Number".
 DESIRED_CONNECTIONS = [
-    ("a2j:Midi Through", "Midi Fighter Twister:Midi Fighter Twister MIDI 1"),
+    ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 1"),
     # Example: ("20:0", "128:0"),
 ]
 
@@ -56,7 +56,11 @@ class snd_seq_event(ctypes.Structure):
 SND_SEQ_OPEN_DUPLEX = 2
 SND_SEQ_NONBLOCK = 1
 SND_SEQ_PORT_CAP_WRITE = 1 << 1
+SND_SEQ_PORT_CAP_READ = 1 << 0
 SND_SEQ_QUERY_SUBS_READ = 1
+
+# Port types
+SND_SEQ_PORT_TYPE_APPLICATION = 1
 
 # Event types that trigger a reconciliation
 RELEVANT_EVENTS = {60, 61, 62, 63, 64, 65, 66, 67}
@@ -79,6 +83,15 @@ alsalib.snd_seq_close.argtypes = [snd_seq_t]
 alsalib.snd_seq_set_client_name.argtypes = [snd_seq_t, ctypes.c_char_p]
 alsalib.snd_seq_client_id.argtypes = [snd_seq_t]
 alsalib.snd_seq_client_id.restype = ctypes.c_int
+
+# Port creation
+alsalib.snd_seq_create_simple_port.argtypes = [
+    snd_seq_t,
+    ctypes.c_char_p,
+    ctypes.c_uint,
+    ctypes.c_uint,
+]
+alsalib.snd_seq_create_simple_port.restype = ctypes.c_int
 
 # Polling for events
 alsalib.snd_seq_poll_descriptors_count.argtypes = [snd_seq_t, ctypes.c_short]
@@ -320,13 +333,28 @@ def main():
 
     alsalib.snd_seq_set_client_name(seq, b"py-alsa-ctypes-manager")
 
+    # Create a simple port for receiving events
+    input_port = alsalib.snd_seq_create_simple_port(
+        seq,
+        b"input",
+        SND_SEQ_PORT_CAP_READ,  # This port can receive events
+        SND_SEQ_PORT_TYPE_APPLICATION,
+    )
+
+    if input_port < 0:
+        print("Error creating input port.", file=sys.stderr)
+        alsalib.snd_seq_close(seq)
+        sys.exit(1)
+
+    print(f"Created input port: {input_port}")
+
     # Subscribe to the announce port to receive system-wide events
     sub_ptr = snd_seq_port_subscribe_t()
     alsalib.snd_seq_port_subscribe_malloc(ctypes.byref(sub_ptr))
 
     sender = snd_seq_addr(client=0, port=1)  # System Announce port is 0:1
     dest_client_id = alsalib.snd_seq_client_id(seq)
-    dest = snd_seq_addr(client=dest_client_id, port=0)  # Our client's first port
+    dest = snd_seq_addr(client=dest_client_id, port=input_port)  # Use the created port
     alsalib.snd_seq_port_subscribe_set_sender(sub_ptr, ctypes.byref(sender))
     alsalib.snd_seq_port_subscribe_set_dest(sub_ptr, ctypes.byref(dest))
 
@@ -334,6 +362,8 @@ def main():
         print("Could not subscribe to announce port.", file=sys.stderr)
         alsalib.snd_seq_close(seq)
         sys.exit(1)
+
+    print("Successfully subscribed to announce port.")
     alsalib.snd_seq_port_subscribe_free(sub_ptr)
 
     # Set up polling
