@@ -415,11 +415,11 @@ def main():
 
 
 if __name__ == "__main__":
-    # Define a no-op handler to suppress ALSA's default error messages
-    @SND_ERROR_HANDLER_T
-    def py_error_handler(filename, line, function, err, fmt):
-        pass
+    # # Define a no-op handler to suppress ALSA's default error messages
+    # @SND_ERROR_HANDLER_T
+    # def py_error_handler(filename, line, function, err, fmt):
+    #     pass
 
-    alsalib.snd_lib_error_set_handler(py_error_handler)
+    # alsalib.snd_lib_error_set_handler(py_error_handler)
 
     main()
