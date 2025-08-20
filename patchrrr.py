@@ -23,10 +23,14 @@ ALSA_DESIRED_CONNECTIONS = [
 ]
 
 JACK_DESIRED_CONNECTIONS = [
-    ("pure_data:output_1", "system:playback_9"),
-    ("pure_data:output_2", "system:playback_10"),
+    # Add your JACK audio connections here.
+    # Examples:
+    # ("pure_data:output_1", "system:playback_1"),
+    # ("pure_data:output_2", "Built-in Audio Analog Stereo:playback_FR"),
 ]
 
+# Patchrrr creates Jack and ALSA clients because these are required to implement
+# our functionality
 CLIENT_NAME = "patchrrr"
 
 # ---------------------------------------------------------------------------
@@ -741,11 +745,11 @@ class JackManager:
 # Unified Manager
 class PatchrrrManager:
     """Unified ALSA MIDI + JACK audio connection manager."""
-    
+
     def __init__(self, alsa_connections=None, jack_connections=None):
         """
         Initialize the manager with desired connections.
-        
+
         Args:
             alsa_connections: List of (source, dest) tuples for ALSA MIDI
             jack_connections: List of (source, dest) tuples for JACK audio
@@ -755,28 +759,28 @@ class PatchrrrManager:
         self.running = True
         self.alsa_mgr = None
         self.jack_mgr = None
-        
+
     def signal_handler(self, sig, frame):
         """Handle shutdown signals."""
         print("\nSignal received, shutting down...")
         self.running = False
-        
+
     def start(self):
         """Start all managers and begin monitoring."""
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
-        
+
         self.alsa_mgr = AlsaManager(self.alsa_connections)
         self.jack_mgr = JackManager(self.jack_connections)
-        
+
         # Start ALSA in its own thread because it uses blocking reads
         alsa_thread = threading.Thread(target=self.alsa_mgr.run, daemon=True)
         alsa_thread.start()
-        
+
         # Start JACK in its own thread for symmetry
         jack_thread = threading.Thread(target=self.jack_mgr.run, daemon=True)
         jack_thread.start()
-        
+
         # Central dispatcher loop
         try:
             while self.running:
@@ -791,7 +795,7 @@ class PatchrrrManager:
         finally:
             self.stop()
             print("\nAll managers shut down. Goodbye!")
-            
+
     def stop(self):
         """Stop all managers."""
         if self.alsa_mgr:
