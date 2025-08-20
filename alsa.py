@@ -10,7 +10,8 @@ from typing import Set, Tuple
 # This list is the "source of truth" for your MIDI setup.
 # Use the format "Client Name:Port Name" or "Client Number:Port Number".
 DESIRED_CONNECTIONS = [
-    ("Pure Data:Pure Data Midi-Out 1", "Pure Data:Pure Data Midi-In 1"),
+    ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 2"),
+    ("Pure Data:2", "Pure Data:0"),
     # Example: ("20:0", "128:0"),
 ]
 
@@ -55,9 +56,10 @@ class snd_seq_event(ctypes.Structure):
 # --- ALSA Constants ---
 SND_SEQ_OPEN_DUPLEX = 2
 SND_SEQ_NONBLOCK = 1
-SND_SEQ_PORT_CAP_WRITE = 1 << 1  # Port can receive data (input port)
-SND_SEQ_PORT_CAP_SUBS_WRITE = 1 << 5
 SND_SEQ_PORT_CAP_READ = 1 << 0  # Port can send data (output port)
+SND_SEQ_PORT_CAP_WRITE = 1 << 1  # Port can receive data (input port)
+SND_SEQ_PORT_CAP_SUBS_READ = 1 << 5
+SND_SEQ_PORT_CAP_SUBS_WRITE = 1 << 6
 SND_SEQ_QUERY_SUBS_READ = 1
 
 # Port types
@@ -75,6 +77,10 @@ RELEVANT_EVENTS = {
     66,  # SND_SEQ_EVENT_PORT_SUBSCRIBED
     67,  # SND_SEQ_EVENT_PORT_UNSUBSCRIBED
 }
+
+# Port direction
+SND_SEQ_PORT_DIR_INPUT = 1
+SND_SEQ_PORT_DIR_OUTPUT = 2
 
 # --- ALSA Function Prototypes ---
 # Error handler to suppress ALSA messages
@@ -163,6 +169,8 @@ alsalib.snd_seq_port_info_get_addr.argtypes = [snd_seq_port_info_t]
 alsalib.snd_seq_port_info_get_addr.restype = ctypes.POINTER(snd_seq_addr)
 alsalib.snd_seq_port_info_get_capability.argtypes = [snd_seq_port_info_t]
 alsalib.snd_seq_port_info_get_capability.restype = ctypes.c_uint
+alsalib.snd_seq_port_info_get_direction.argtypes = [snd_seq_port_info_t]
+alsalib.snd_seq_port_info_get_direction.restype = ctypes.c_uint
 alsalib.snd_seq_port_info_free.argtypes = [snd_seq_port_info_t]
 alsalib.snd_seq_get_any_port_info.argtypes = [
     snd_seq_t,
@@ -311,32 +319,28 @@ def debug_port_capabilities(port_str: str) -> str:
         return "cannot get port info"
 
     caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
-    
-    # Get port direction - need to define the constants
-    SND_SEQ_PORT_DIR_INPUT = 1
-    SND_SEQ_PORT_DIR_OUTPUT = 2
-    
-    # Check if we can get direction from the port info structure
-    # Note: This is a simplified approach since we don't have direct access to direction
-    
+    direction = alsalib.snd_seq_port_info_get_direction(pinfo_ptr)
+
     cap_strings = []
     if caps & SND_SEQ_PORT_CAP_READ:
         cap_strings.append("READ")
+    if caps & SND_SEQ_PORT_CAP_SUBS_READ:
+        cap_strings.append("SUBS_READ")
     if caps & SND_SEQ_PORT_CAP_WRITE:
         cap_strings.append("WRITE")
     if caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
         cap_strings.append("SUBS_WRITE")
-    if caps & (1 << 4):  # SND_SEQ_PORT_CAP_SUBS_READ
-        cap_strings.append("SUBS_READ")
-    
-    # Determine port type based on capabilities
-    if caps & SND_SEQ_PORT_CAP_READ and caps & (1 << 4):  # SUBS_READ
-        cap_strings.append("OUTPUT")
-    if caps & SND_SEQ_PORT_CAP_WRITE and caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
-        cap_strings.append("INPUT")
+
+    dir_string = "UNKNOWN"
+    if direction == SND_SEQ_PORT_DIR_INPUT:
+        dir_string = "INPUT"
+    elif direction == SND_SEQ_PORT_DIR_OUTPUT:
+        dir_string = "OUTPUT"
+    elif direction == (SND_SEQ_PORT_DIR_INPUT | SND_SEQ_PORT_DIR_OUTPUT):
+        dir_string = "DUPLEX"
 
     alsalib.snd_seq_port_info_free(pinfo_ptr)
-    return f"caps=0x{caps:x} [{', '.join(cap_strings)}]"
+    return f"caps=0x{caps:x} [{', '.join(cap_strings)}], dir=[{dir_string}]"
 
 
 def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
@@ -361,6 +365,7 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
         )
         return False
 
+    print("Parsed source address:", sender.client, sender.port)
     result = alsalib.snd_seq_parse_address(
         seq, ctypes.byref(dest), dest_str.encode("utf-8")
     )
@@ -370,36 +375,7 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
             file=sys.stderr,
         )
         return False
-
-    # Check port capabilities - source must be readable, dest must be writable
-    pinfo_ptr = snd_seq_port_info_t()
-    alsalib.snd_seq_port_info_malloc(ctypes.byref(pinfo_ptr))
-
-    # Check source capabilities
-    if alsalib.snd_seq_get_any_port_info(seq, sender.client, sender.port, pinfo_ptr) < 0:
-        alsalib.snd_seq_port_info_free(pinfo_ptr)
-        print(f"  [ERROR] Cannot get source port info")
-        return False
-    
-    source_caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
-    if not (source_caps & SND_SEQ_PORT_CAP_READ):
-        alsalib.snd_seq_port_info_free(pinfo_ptr)
-        print(f"  [ERROR] Source port is not readable (cannot send data)")
-        return False
-
-    # Check destination capabilities
-    if alsalib.snd_seq_get_any_port_info(seq, dest.client, dest.port, pinfo_ptr) < 0:
-        alsalib.snd_seq_port_info_free(pinfo_ptr)
-        print(f"  [ERROR] Cannot get destination port info")
-        return False
-    
-    dest_caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
-    if not (dest_caps & SND_SEQ_PORT_CAP_WRITE):
-        alsalib.snd_seq_port_info_free(pinfo_ptr)
-        print(f"  [ERROR] Destination port is not writable (cannot receive data)")
-        return False
-
-    alsalib.snd_seq_port_info_free(pinfo_ptr)
+    print("Parsed dest address:", dest.client, dest.port)
 
     # Check if connection already exists
     query_ptr = snd_seq_query_subscribe_t()
@@ -407,7 +383,7 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
     alsalib.snd_seq_query_subscribe_set_root(query_ptr, ctypes.byref(sender))
     alsalib.snd_seq_query_subscribe_set_type(query_ptr, SND_SEQ_QUERY_SUBS_READ)
     alsalib.snd_seq_query_subscribe_set_index(query_ptr, 0)
-    
+
     connection_exists = False
     while alsalib.snd_seq_query_port_subscribers(seq, query_ptr) >= 0:
         sub_addr = alsalib.snd_seq_query_subscribe_get_addr(query_ptr).contents
@@ -416,9 +392,9 @@ def connect_alsa_ports(source_str: str, dest_str: str) -> bool:
             break
         index = alsalib.snd_seq_query_subscribe_get_index(query_ptr)
         alsalib.snd_seq_query_subscribe_set_index(query_ptr, index + 1)
-    
+
     alsalib.snd_seq_query_subscribe_free(query_ptr)
-    
+
     if connection_exists:
         print(f"  [OK] Connection already exists: {source_str} -> {dest_str}")
         return True
@@ -484,12 +460,12 @@ def list_available_ports():
             cap_str = []
             if caps & SND_SEQ_PORT_CAP_READ:
                 cap_str.append("READ")
+            if caps & SND_SEQ_PORT_CAP_SUBS_READ:
+                cap_str.append("SUBS_READ")
             if caps & SND_SEQ_PORT_CAP_WRITE:
                 cap_str.append("WRITE")
             if caps & SND_SEQ_PORT_CAP_SUBS_WRITE:
                 cap_str.append("SUBS_WRITE")
-            if caps & (1 << 4):  # SND_SEQ_PORT_CAP_SUBS_READ
-                cap_str.append("SUBS_READ")
 
             full_port_str = f"{client_name}:{port_name}"
             print(
