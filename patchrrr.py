@@ -36,11 +36,10 @@ main_event_queue = queue.Queue()
 running = True
 
 
-# ###########################################################################
-# ALSA SECTION – copied verbatim from alsa.py with minimal class wrapper edits
-# ###########################################################################
+# ALSA MIDI Manager
+# ---------------------------------------------------------------------------
 
-# --- ctypes ALSA Library Definitions -----------------------------------------
+# --- ALSA ctypes setup ------------------------------------------------------
 
 libasound_path = ctypes.util.find_library("asound")
 if not libasound_path:
@@ -226,11 +225,7 @@ class AlsaManager:
         null_handler = SND_ERROR_HANDLER_T(null_error_handler)
         alsalib.snd_lib_error_set_handler(null_handler)
 
-    # -----------------------------------------------------------------------
-    # The remainder of AlsaManager is identical to alsa.py except that every
-    # reconcile_connections() call publishes "reconcile_alsa" into main_event_queue
-    # instead of calling reconcile_connections() directly.
-    # -----------------------------------------------------------------------
+    # Core functionality
 
     def start(self):
         seq_ptr = snd_seq_t()
@@ -298,9 +293,7 @@ class AlsaManager:
                     print(f"Error in ALSA event reader: {e}", file=sys.stderr)
                 break
 
-    # -----------------------------------------------------------------------
-    # All other methods from alsa.py follow verbatim (get_current_state, etc.)
-    # -----------------------------------------------------------------------
+    # Helper methods
     def get_current_state(self) -> Tuple[Set[str], Set[Tuple[str, str]]]:
         if not self.seq:
             return set(), set()
@@ -517,11 +510,10 @@ class AlsaManager:
         )
 
 
-# ###########################################################################
-# JACK SECTION – refactored from jack.py into JackManager class
-# ###########################################################################
+# JACK Audio Manager
+# ---------------------------------------------------------------------------
 
-# --- ctypes JACK Library Definitions ----------------------------------------
+# --- JACK ctypes setup ------------------------------------------------------
 
 libjack_path = ctypes.util.find_library("jack")
 if not libjack_path:
@@ -604,9 +596,7 @@ class JackManager:
         self.c_port_callback = None
         self.c_graph_callback = None
 
-    # -----------------------------------------------------------------------
-    # All former module-level jack functions are now instance methods
-    # -----------------------------------------------------------------------
+    # Core functionality
     def start(self):
         status = ctypes.c_int()
         client_name = CLIENT_NAME
@@ -679,9 +669,7 @@ class JackManager:
         main_event_queue.put("reconcile_jack")
         return 0
 
-    # -----------------------------------------------------------------------
-    # Utility methods – direct translation of former jack.py functions
-    # -----------------------------------------------------------------------
+    # Helper methods
     def get_jack_ports(self) -> Set[str]:
         if not self.client:
             return set()
@@ -750,9 +738,7 @@ class JackManager:
                 self.connect_jack_ports(source, dest)
 
 
-# ###########################################################################
-# MAIN MANAGER CLASS
-# ###########################################################################
+# Unified Manager
 class PatchrrrManager:
     """Unified ALSA MIDI + JACK audio connection manager."""
     
@@ -814,17 +800,8 @@ class PatchrrrManager:
             self.jack_mgr.stop()
 
 
-# ###########################################################################
-# MAIN (for backward compatibility)
-# ###########################################################################
-def signal_handler(sig, frame):
-    global running
-    print("\nSignal received, shutting down...")
-    running = False
-
-
+# Entry point
 def main():
-    """Legacy main function for backward compatibility."""
     manager = PatchrrrManager(ALSA_DESIRED_CONNECTIONS, JACK_DESIRED_CONNECTIONS)
     manager.start()
 
