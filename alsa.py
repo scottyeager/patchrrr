@@ -665,15 +665,7 @@ class AlsaManager:
 # --- Main Application ---
 def main():
     """Initializes and runs the ALSA connection manager."""
-    # This list is the "source of truth" for your MIDI setup.
-    # Use the format "Client Name:Port Name" or "Client Number:Port Number".
-    desired_connections = [
-        ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 2"),
-        ("Pure Data:2", "Pure Data:0"),
-        # Example: ("20:0", "128:0"),
-    ]
-
-    manager = AlsaManager(desired_connections)
+    manager = AlsaManager(DESIRED_CONNECTIONS)
     manager.run()
 
 
