@@ -751,7 +751,71 @@ class JackManager:
 
 
 # ###########################################################################
-# MAIN
+# MAIN MANAGER CLASS
+# ###########################################################################
+class PatchrrrManager:
+    """Unified ALSA MIDI + JACK audio connection manager."""
+    
+    def __init__(self, alsa_connections=None, jack_connections=None):
+        """
+        Initialize the manager with desired connections.
+        
+        Args:
+            alsa_connections: List of (source, dest) tuples for ALSA MIDI
+            jack_connections: List of (source, dest) tuples for JACK audio
+        """
+        self.alsa_connections = alsa_connections or []
+        self.jack_connections = jack_connections or []
+        self.running = True
+        self.alsa_mgr = None
+        self.jack_mgr = None
+        
+    def signal_handler(self, sig, frame):
+        """Handle shutdown signals."""
+        print("\nSignal received, shutting down...")
+        self.running = False
+        
+    def start(self):
+        """Start all managers and begin monitoring."""
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        
+        self.alsa_mgr = AlsaManager(self.alsa_connections)
+        self.jack_mgr = JackManager(self.jack_connections)
+        
+        # Start ALSA in its own thread because it uses blocking reads
+        alsa_thread = threading.Thread(target=self.alsa_mgr.run, daemon=True)
+        alsa_thread.start()
+        
+        # Start JACK in its own thread for symmetry
+        jack_thread = threading.Thread(target=self.jack_mgr.run, daemon=True)
+        jack_thread.start()
+        
+        # Central dispatcher loop
+        try:
+            while self.running:
+                try:
+                    event = main_event_queue.get(timeout=1.0)
+                    if event == "reconcile_alsa":
+                        self.alsa_mgr.reconcile_connections()
+                    elif event == "reconcile_jack":
+                        self.jack_mgr.reconcile_connections()
+                except queue.Empty:
+                    pass
+        finally:
+            self.stop()
+            print("\nAll managers shut down. Goodbye!")
+            
+    def stop(self):
+        """Stop all managers."""
+        if self.alsa_mgr:
+            self.alsa_mgr.stop()
+        if self.jack_mgr:
+            self.jack_mgr.stop()
+
+
+# ###########################################################################
+# MAIN (for backward compatibility)
 # ###########################################################################
 def signal_handler(sig, frame):
     global running
@@ -760,36 +824,9 @@ def signal_handler(sig, frame):
 
 
 def main():
-    global running
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    alsa_mgr = AlsaManager(ALSA_DESIRED_CONNECTIONS)
-    jack_mgr = JackManager(JACK_DESIRED_CONNECTIONS)
-
-    # Start ALSA in its own thread because it uses blocking reads
-    alsa_thread = threading.Thread(target=alsa_mgr.run, daemon=True)
-    alsa_thread.start()
-
-    # Start JACK in its own thread for symmetry
-    jack_thread = threading.Thread(target=jack_mgr.run, daemon=True)
-    jack_thread.start()
-
-    # Central dispatcher loop
-    try:
-        while running:
-            try:
-                event = main_event_queue.get(timeout=1.0)
-                if event == "reconcile_alsa":
-                    alsa_mgr.reconcile_connections()
-                elif event == "reconcile_jack":
-                    jack_mgr.reconcile_connections()
-            except queue.Empty:
-                pass
-    finally:
-        alsa_mgr.stop()
-        jack_mgr.stop()
-        print("\nAll managers shut down. Goodbye!")
+    """Legacy main function for backward compatibility."""
+    manager = PatchrrrManager(ALSA_DESIRED_CONNECTIONS, JACK_DESIRED_CONNECTIONS)
+    manager.start()
 
 
 if __name__ == "__main__":
