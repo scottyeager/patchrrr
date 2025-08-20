@@ -8,11 +8,10 @@ import sys
 from typing import Set, Tuple
 
 # This list is the "source of truth" for your MIDI setup.
-# Use the format "Client Name:Port Name" or "Client Number:Port Number".
+# Both numbers and names are accepted for clients and ports
 DESIRED_CONNECTIONS = [
-    ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 2"),
-    ("Pure Data:Pure Data Midi-Out 1", "Pure Data:Pure Data Midi-In 2"),
-    ("Pure Data:2", "Pure Data:1"),
+    # Example: ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 2"),
+    # Example: ("Pure Data:2", "14:Midi Through Port-0"),
     # Example: ("20:0", "128:0"),
 ]
 
