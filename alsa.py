@@ -2,9 +2,10 @@
 
 import ctypes
 import ctypes.util
-import select
+import queue
 import signal
 import sys
+import threading
 from typing import Set, Tuple
 
 # This list is the "source of truth" for your MIDI setup.
@@ -228,18 +229,18 @@ class AlsaManager:
         self.desired_connections = desired_connections
         self.seq = None
         self.running = True
-        self.poller = None
-        self.poll_fds = None
+        self.event_queue = queue.Queue()
+        self.event_thread = None
 
         # Install null error handler to suppress ALSA error messages
         null_handler = SND_ERROR_HANDLER_T(null_error_handler)
         alsalib.snd_lib_error_set_handler(null_handler)
 
     def start(self):
-        """Opens the ALSA sequencer and sets up for event polling."""
+        """Opens the ALSA sequencer in blocking mode."""
         seq_ptr = snd_seq_t()
         result = alsalib.snd_seq_open(
-            ctypes.byref(seq_ptr), b"default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK
+            ctypes.byref(seq_ptr), b"default", SND_SEQ_OPEN_DUPLEX, 0  # 0 = blocking
         )
         if result < 0:
             print(
@@ -275,24 +276,6 @@ class AlsaManager:
             return False
         print("Successfully connected to announce port for events.")
 
-        poll_count = alsalib.snd_seq_poll_descriptors_count(self.seq, select.POLLIN)
-
-        class pollfd(ctypes.Structure):
-            _fields_ = [
-                ("fd", ctypes.c_int),
-                ("events", ctypes.c_short),
-                ("revents", ctypes.c_short),
-            ]
-
-        self.poll_fds = (pollfd * poll_count)()
-        alsalib.snd_seq_poll_descriptors(
-            self.seq, ctypes.byref(self.poll_fds), poll_count, select.POLLIN
-        )
-
-        self.poller = select.poll()
-        for pfd in self.poll_fds:
-            self.poller.register(pfd.fd, select.POLLIN)
-
         return True
 
     def stop(self):
@@ -303,7 +286,7 @@ class AlsaManager:
             self.seq = None
 
     def run(self):
-        """Main event loop."""
+        """Main event loop using queue-based processing."""
         if not self.start():
             sys.exit(1)
 
@@ -316,23 +299,35 @@ class AlsaManager:
                 "\n--- Initial setup complete. Waiting for ALSA events... (Press Ctrl+C to exit) ---"
             )
 
-            while self.running:
-                if self.poller.poll(1000):  # 1 second timeout
-                    event_ptr = ctypes.POINTER(snd_seq_event)()
-                    reconciliation_needed = False
-                    while (
-                        alsalib.snd_seq_event_input(self.seq, ctypes.byref(event_ptr))
-                        >= 0
-                    ):
-                        event = event_ptr.contents
-                        if event and event.type in RELEVANT_EVENTS:
-                            reconciliation_needed = True
+            # Start the event reading thread
+            self.event_thread = threading.Thread(target=self._event_reader, daemon=True)
+            self.event_thread.start()
 
-                    if reconciliation_needed:
+            while self.running:
+                try:
+                    event_type = self.event_queue.get(timeout=1.0)
+                    if event_type in RELEVANT_EVENTS:
                         print("ALSA Event detected, triggering reconciliation.")
                         self.reconcile_connections()
+                except queue.Empty:
+                    pass  # Timeout - check if still running
         finally:
+            self.running = False
             self.stop()
+
+    def _event_reader(self):
+        """Thread function to read ALSA events and queue them."""
+        while self.running:
+            try:
+                event_ptr = ctypes.POINTER(snd_seq_event)()
+                if alsalib.snd_seq_event_input(self.seq, ctypes.byref(event_ptr)) >= 0:
+                    event = event_ptr.contents
+                    if event:
+                        self.event_queue.put(event.type)
+            except Exception as e:
+                if self.running:
+                    print(f"Error in event reader: {e}", file=sys.stderr)
+                break
 
     def signal_handler(self, sig, frame):
         """Handles signals and sets the running flag to false."""
