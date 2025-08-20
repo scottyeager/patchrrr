@@ -12,7 +12,7 @@ from typing import Set, Tuple
 DESIRED_CONNECTIONS = [
     ("Midi Through:Midi Through Port-0", "Pure Data:Pure Data Midi-In 2"),
     ("Pure Data:Pure Data Midi-Out 1", "Pure Data:Pure Data Midi-In 2"),
-    ("Pure Data:2", "Pure Data:0"),
+    ("Pure Data:2", "Pure Data:1"),
     # Example: ("20:0", "128:0"),
 ]
 
@@ -544,7 +544,7 @@ class AlsaManager:
         Builds a map of port strings to their client/port IDs.
         Handles arbitrary combinations of names and IDs:
         - "ClientName:PortName"
-        - "ClientID:PortID" 
+        - "ClientID:PortID"
         - "ClientName:PortID"
         - "ClientID:PortName"
         """
@@ -556,7 +556,7 @@ class AlsaManager:
         client_by_name = {}  # {client_name: client_id}
         port_by_client_port_id = {}  # {(client_id, port_id): port_name}
         port_by_client_name = {}  # {(client_name, port_name): (client_id, port_id)}
-        
+
         cinfo_ptr = snd_seq_client_info_t()
         pinfo_ptr = snd_seq_port_info_t()
         alsalib.snd_seq_client_info_malloc(ctypes.byref(cinfo_ptr))
@@ -568,7 +568,7 @@ class AlsaManager:
             client_name = alsalib.snd_seq_client_info_get_name(cinfo_ptr).decode(
                 "utf-8"
             )
-            
+
             client_by_id[client_id] = client_name
             client_by_name[client_name] = client_id
 
@@ -579,17 +579,17 @@ class AlsaManager:
                 port_name = alsalib.snd_seq_port_info_get_name(pinfo_ptr).decode(
                     "utf-8"
                 )
-                
+
                 # Store bidirectional mappings
                 port_by_client_port_id[(addr.client, addr.port)] = port_name
                 port_by_client_name[(client_name, port_name)] = (addr.client, addr.port)
 
         alsalib.snd_seq_client_info_free(cinfo_ptr)
         alsalib.snd_seq_port_info_free(pinfo_ptr)
-        
+
         # Build final port map with all possible combinations
         port_map = {}
-        
+
         # Add basic mappings
         for (client_id, port_id), port_name in port_by_client_port_id.items():
             client_name = client_by_id[client_id]
@@ -597,14 +597,17 @@ class AlsaManager:
             port_map[f"{client_name}:{port_name}"] = (client_id, port_id)
             # Full ID mapping
             port_map[f"{client_id}:{port_id}"] = (client_id, port_id)
-            
+
         # Add mixed mappings
-        for (client_name, port_name), (client_id, port_id) in port_by_client_name.items():
+        for (client_name, port_name), (
+            client_id,
+            port_id,
+        ) in port_by_client_name.items():
             # Client name + port ID
             port_map[f"{client_name}:{port_id}"] = (client_id, port_id)
             # Client ID + port name
             port_map[f"{client_id}:{port_name}"] = (client_id, port_id)
-            
+
         return port_map
 
     def reconcile_connections(self):
