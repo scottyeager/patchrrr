@@ -244,7 +244,7 @@ class AlsaManager:
             )
             return False
         self.seq = seq_ptr
-        alsalib.snd_seq_set_client_name(self.seq, CLIENT_NAME)
+        alsalib.snd_seq_set_client_name(self.seq, CLIENT_NAME.encode())
         input_port = alsalib.snd_seq_create_simple_port(
             self.seq,
             b"input",
