@@ -171,8 +171,8 @@ alsalib.snd_seq_port_info_get_addr.argtypes = [snd_seq_port_info_t]
 alsalib.snd_seq_port_info_get_addr.restype = ctypes.POINTER(snd_seq_addr)
 alsalib.snd_seq_port_info_get_capability.argtypes = [snd_seq_port_info_t]
 alsalib.snd_seq_port_info_get_capability.restype = ctypes.c_uint
-alsalib.snd_seq_port_info_get_direction.argtypes = [snd_seq_port_info_t]
-alsalib.snd_seq_port_info_get_direction.restype = ctypes.c_uint
+# alsalib.snd_seq_port_info_get_direction.argtypes = [snd_seq_port_info_t]
+# alsalib.snd_seq_port_info_get_direction.restype = ctypes.c_uint
 alsalib.snd_seq_port_info_free.argtypes = [snd_seq_port_info_t]
 alsalib.snd_seq_get_any_port_info.argtypes = [
     snd_seq_t,
