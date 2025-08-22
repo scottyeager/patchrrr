@@ -364,7 +364,7 @@ class AlsaManager:
 
     def reconcile_connections(self):
         print("\n--- Reconciling ALSA MIDI Connections ---")
-        port_map = self.get_port_map()
+        port_map, port_capabilities = self.get_port_map()
         _, current_connections = self.get_current_state()
         if not port_map:
             print("  [WARN] No ALSA MIDI ports available.")
@@ -372,7 +372,7 @@ class AlsaManager:
             return
         for source_str, dest_str in self.desired_connections:
             if (source_str, dest_str) in current_connections:
-                print(f"  [OK] Connection already exists: {source_str} ->{dest_str}")
+                print(f"  [OK] Connection already exists: {source_str} -> {dest_str}")
                 continue
             source_addr_tuple = port_map.get(source_str)
             if not source_addr_tuple:
@@ -382,6 +382,18 @@ class AlsaManager:
             if not dest_addr_tuple:
                 print(f"  [WARN] Destination port not available: {dest_str}")
                 continue
+            # Check port capabilities - source must be able to send, dest must be able to receive
+            source_caps = port_capabilities.get(source_addr_tuple, 0)
+            dest_caps = port_capabilities.get(dest_addr_tuple, 0)
+            
+            # For MIDI connections: source needs READ capability, destination needs WRITE capability
+            if not (source_caps & SND_SEQ_PORT_CAP_READ):
+                print(f"  [WARN] Source port cannot send MIDI: {source_str}")
+                continue
+            if not (dest_caps & SND_SEQ_PORT_CAP_WRITE):
+                print(f"  [WARN] Destination port cannot receive MIDI: {dest_str}")
+                continue
+                
             print("  [!] Missing connection detected. Attempting to connect...")
             sender = snd_seq_addr(
                 client=source_addr_tuple[0], port=source_addr_tuple[1]
@@ -426,6 +438,7 @@ class AlsaManager:
         client_by_name = {}
         port_by_client_port_id = {}
         port_by_client_name = {}
+        port_capabilities = {}  # Track capabilities for each port
         cinfo_ptr = snd_seq_client_info_t()
         pinfo_ptr = snd_seq_port_info_t()
         alsalib.snd_seq_client_info_malloc(ctypes.byref(cinfo_ptr))
@@ -445,11 +458,13 @@ class AlsaManager:
                 port_name = alsalib.snd_seq_port_info_get_name(pinfo_ptr).decode(
                     "utf-8"
                 )
+                caps = alsalib.snd_seq_port_info_get_capability(pinfo_ptr)
                 port_by_client_port_id[(addr.client, addr.port)] = port_name
                 port_by_client_name[(client_name, port_name)] = (
                     addr.client,
                     addr.port,
                 )
+                port_capabilities[(addr.client, addr.port)] = caps
         alsalib.snd_seq_client_info_free(cinfo_ptr)
         alsalib.snd_seq_port_info_free(pinfo_ptr)
         port_map = {}
@@ -463,7 +478,7 @@ class AlsaManager:
         ) in port_by_client_name.items():
             port_map[f"{client_name}:{port_id}"] = (client_id, port_id)
             port_map[f"{client_id}:{port_name}"] = (client_id, port_id)
-        return port_map
+        return port_map, port_capabilities
 
     def list_available_ports(self):
         print("\n--- Available MIDI Ports ---")
