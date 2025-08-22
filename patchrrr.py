@@ -559,6 +559,14 @@ class JackStatus:
     JackServerFailed = 0x10
 
 
+class JackPortFlags:
+    JackPortIsInput = 0x01
+    JackPortIsOutput = 0x02
+    JackPortCanMonitor = 0x04
+    JackPortIsPhysical = 0x08
+    JackPortIsTerminal = 0x10
+
+
 ClientCallback = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p)
 PortCallback = ctypes.CFUNCTYPE(None, jack_port_id_t, ctypes.c_int, ctypes.c_void_p)
 GraphCallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
@@ -601,6 +609,8 @@ jacklib.jack_port_get_all_connections.argtypes = [jack_client_t, jack_port_t]
 jacklib.jack_port_get_all_connections.restype = ctypes.POINTER(ctypes.c_char_p)
 jacklib.jack_connect.argtypes = [jack_client_t, ctypes.c_char_p, ctypes.c_char_p]
 jacklib.jack_connect.restype = ctypes.c_int
+jacklib.jack_port_flags.argtypes = [jack_port_t]
+jacklib.jack_port_flags.restype = ctypes.c_int
 jacklib.jack_free.argtypes = [ctypes.c_void_p]
 
 
@@ -689,25 +699,32 @@ class JackManager:
         return 0
 
     # Helper methods
-    def get_jack_ports(self) -> Set[str]:
+    def get_jack_ports(self) -> Tuple[Set[str], dict]:
         if not self.client:
-            return set()
+            return set(), {}
         ports_ptr = jacklib.jack_get_ports(self.client, None, None, 0)
         if not ports_ptr:
-            return set()
+            return set(), {}
         ports = set()
+        port_flags = {}
         i = 0
         while ports_ptr[i]:
-            ports.add(ports_ptr[i].decode("utf-8"))
+            port_name = ports_ptr[i].decode("utf-8")
+            ports.add(port_name)
+            # Get port flags
+            port = jacklib.jack_port_by_name(self.client, port_name.encode("utf-8"))
+            if port:
+                flags = jacklib.jack_port_flags(port)
+                port_flags[port_name] = flags
             i += 1
         jacklib.jack_free(ports_ptr)
-        return ports
+        return ports, port_flags
 
     def get_current_connections(self) -> Set[Tuple[str, str]]:
         if not self.client:
             return set()
         connections = set()
-        all_ports = self.get_jack_ports()
+        all_ports, _ = self.get_jack_ports()  # Ignore flags for this method
         for source_port_name in all_ports:
             source_port = jacklib.jack_port_by_name(
                 self.client, source_port_name.encode("utf-8")
@@ -744,7 +761,7 @@ class JackManager:
 
     def reconcile_connections(self):
         print("\n--- Reconciling JACK Connections ---")
-        available_ports = self.get_jack_ports()
+        available_ports, port_flags = self.get_jack_ports()
         current_connections = self.get_current_connections()
         if not available_ports:
             print("  [WARN] JACK server not running or no ports available.")
@@ -753,6 +770,18 @@ class JackManager:
             if (source, dest) in current_connections:
                 continue
             if source in available_ports and dest in available_ports:
+                # Check port capabilities - source must be output, dest must be input
+                source_flags = port_flags.get(source, 0)
+                dest_flags = port_flags.get(dest, 0)
+                
+                # For JACK audio connections: source needs to be output, dest needs to be input
+                if not (source_flags & JackPortFlags.JackPortIsOutput):
+                    print(f"  [WARN] Source port is not an output: {source}")
+                    continue
+                if not (dest_flags & JackPortFlags.JackPortIsInput):
+                    print(f"  [WARN] Destination port is not an input: {dest}")
+                    continue
+                    
                 print("  [!] Missing connection detected. Restoring...")
                 self.connect_jack_ports(source, dest)
 
