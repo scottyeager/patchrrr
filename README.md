@@ -16,15 +16,39 @@ This project was created for a headless audio processing setup, with no X or Way
 * Run in the background so the main thread isn't blocked
 * Support for Jack MIDI (assuming it doesn't just work already)
 
+## Install
+
+```
+uv pip install git+https://github.com/scottyeager/patchrrr.git
+```
+
+Or for a quick and dirty option, just copy the one .py file.
+
 ## Usage
 
-Just copy or download the `patchrrr.py` file. You can then use it in two ways:
+Run standalone by editing the connection lists at the top of `patchrrr.py`, then:
 
-1. Edit the examples at the top to specify the clients you want to patch together, then run:
 ```
 python patchrrr.py
 ```
-2. Import `patchrrr` into your own file and create an instance of the manager class
+
+Or import it and pass your own connections:
+
+```python
+from patchrrr import PatchrrrManager
+
+manager = PatchrrrManager(
+    alsa_connections=[
+        ("My App:output", "My Synth:input"),
+    ],
+    jack_connections=[
+        ("app:out_1", "system:playback_1"),
+    ],
+)
+manager.start()
+```
+
+When embedding in a larger application, pass `install_signals=False` to prevent patchrrr from overriding your signal handlers, then set `manager.running = False` to stop it.
 
 ## Notes
 
