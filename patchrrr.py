@@ -790,16 +790,18 @@ class JackManager:
 class PatchrrrManager:
     """Unified ALSA MIDI + JACK audio connection manager."""
 
-    def __init__(self, alsa_connections=None, jack_connections=None):
+    def __init__(self, alsa_connections=None, jack_connections=None, install_signals=True):
         """
         Initialize the manager with desired connections.
 
         Args:
             alsa_connections: List of (source, dest) tuples for ALSA MIDI
             jack_connections: List of (source, dest) tuples for JACK audio
+            install_signals: If False, skip signal handler registration (for embedding)
         """
         self.alsa_connections = alsa_connections or []
         self.jack_connections = jack_connections or []
+        self.install_signals = install_signals
         self.running = True
         self.alsa_mgr = None
         self.jack_mgr = None
@@ -811,8 +813,9 @@ class PatchrrrManager:
 
     def start(self):
         """Start all managers and begin monitoring."""
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
+        if self.install_signals:
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTERM, self.signal_handler)
 
         self.alsa_mgr = AlsaManager(self.alsa_connections)
         self.jack_mgr = JackManager(self.jack_connections)
