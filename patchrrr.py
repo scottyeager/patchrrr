@@ -3,6 +3,7 @@
 patchrrr.py – unified ALSA MIDI + JACK audio connection manager
 """
 
+import argparse
 import ctypes
 import ctypes.util
 import queue
@@ -850,11 +851,77 @@ class PatchrrrManager:
         if self.jack_mgr:
             self.jack_mgr.stop()
 
+    def snapshot(self):
+        """Print current connections as an importable Python module."""
+        real_stdout = sys.stdout
+        sys.stdout = sys.stderr
+
+        self.alsa_mgr = AlsaManager([])
+        self.jack_mgr = JackManager([])
+
+        alsa_connections = set()
+        if self.alsa_mgr.start():
+            _, all_connections = self.alsa_mgr.get_current_state()
+            for src, dst in all_connections:
+                src_client = src.split(":")[0]
+                dst_client = dst.split(":")[0]
+                if src_client in (CLIENT_NAME, "System") or dst_client in (CLIENT_NAME, "System"):
+                    continue
+                alsa_connections.add((dst, src))
+
+        jack_connections = set()
+        if self.jack_mgr.start():
+            available_ports, port_flags = self.jack_mgr.get_jack_ports()
+            for port_name in available_ports:
+                flags = port_flags.get(port_name, 0)
+                if not (flags & JackPortFlags.JackPortIsOutput):
+                    continue
+                port = jacklib.jack_port_by_name(
+                    self.jack_mgr.client, port_name.encode("utf-8")
+                )
+                if not port:
+                    continue
+                conns_ptr = jacklib.jack_port_get_all_connections(
+                    self.jack_mgr.client, port
+                )
+                if not conns_ptr:
+                    continue
+                i = 0
+                while conns_ptr[i]:
+                    dest_name = conns_ptr[i].decode("utf-8")
+                    jack_connections.add((port_name, dest_name))
+                    i += 1
+                jacklib.jack_free(conns_ptr)
+
+        self.stop()
+        sys.stdout = real_stdout
+
+        lines = []
+        lines.append("ALSA_DESIRED_CONNECTIONS = [")
+        for src, dst in sorted(alsa_connections):
+            lines.append(f"    ({src!r}, {dst!r}),")
+        lines.append("]")
+        lines.append("")
+        lines.append("JACK_DESIRED_CONNECTIONS = [")
+        for src, dst in sorted(jack_connections):
+            lines.append(f"    ({src!r}, {dst!r}),")
+        lines.append("]")
+        print("\n".join(lines))
+
 
 # Entry point
 def main():
-    manager = PatchrrrManager(ALSA_DESIRED_CONNECTIONS, JACK_DESIRED_CONNECTIONS)
-    manager.start()
+    parser = argparse.ArgumentParser(description="patchrrr – ALSA MIDI + JACK audio connection manager")
+    parser.add_argument("--snapshot", action="store_true",
+                        help="Print current connections as an importable Python module")
+    args = parser.parse_args()
+
+    if args.snapshot:
+        manager = PatchrrrManager(install_signals=False)
+        manager.snapshot()
+    else:
+        manager = PatchrrrManager(ALSA_DESIRED_CONNECTIONS, JACK_DESIRED_CONNECTIONS)
+        manager.start()
 
 
 if __name__ == "__main__":
